@@ -9,134 +9,154 @@ client = MongoClient(MONGO_URL)
 db = client["ac_controller"]
 collection = db["ac_status"]
 
-# Initialize DB if empty
+# --- Initialize default AC status if empty ---
 if collection.count_documents({}) == 0:
-    collection.insert_one({"status": "off", "temperature": 24})
+    collection.insert_one({"status": "OFF", "temperature": 24})
 
-# --- FRONTEND HTML (unchanged) ---
-HTML = """<!DOCTYPE html>
+# --- Frontend HTML (unchanged from your provided code) ---
+HTML = """
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>AC Controller</title>
+  <title>AC Controller Web App</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body {
+      background: #111;
+      color: #fff;
       font-family: Arial, sans-serif;
-      background: #f4f7fa;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      flex-direction: column;
+    }
+    .ac-status {
+      margin-bottom: 20px;
+      font-size: 1.3em;
+    }
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .temp-section {
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      height: 100vh;
     }
-    .container {
-      background: #fff;
-      padding: 30px 40px;
-      border-radius: 8px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.12);
-      text-align: center;
-    }
-    .btn {
-      font-size: 1.1em;
-      padding: 10px 30px;
-      margin: 10px;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-    }
-    .btn-on {
-      background: #28a745;
-      color: #fff;
-    }
-    .btn-off {
-      background: #dc3545;
-      color: #fff;
-    }
-    .temp-control {
+    .temp-controls {
+      display: flex;
+      gap: 10px;
       margin: 15px 0;
     }
-    input[type="range"] {
-      width: 200px;
+    button {
+      background: #222;
+      color: #fff;
+      border: none;
+      outline: none;
+      padding: 15px 25px;
+      margin: 0 5px;
+      border-radius: 7px;
+      font-size: 1.2em;
+      cursor: pointer;
+      transition: background 0.25s;
+    }
+    button:active, button:focus {
+      background: #444;
+    }
+    .set-temp-btn {
+      background: #2979FF;
+      margin-top: 10px;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h2>AC Controller</h2>
-    <div>
-      <button class="btn btn-on" onclick="setAC('on')">ON</button>
-      <button class="btn btn-off" onclick="setAC('off')">OFF</button>
+  <div class="ac-status" id="status">AC is OFF</div>
+  <div class="controls">
+    <button onclick="toggleAC(true)">Turn ON</button>
+    <button onclick="toggleAC(false)">Turn OFF</button>
+  </div>
+  <div class="temp-section">
+    <div>Temperature: <span id="temp">24</span>°C</div>
+    <div class="temp-controls">
+      <button onclick="changeTemp(-1)">-</button>
+      <button onclick="changeTemp(1)">+</button>
     </div>
-    <div class="temp-control">
-      <label for="tempRange">Temperature: <span id="tempDisplay">24</span>°C</label><br>
-      <input type="range" id="tempRange" min="16" max="30" value="24" oninput="updateTempDisplay(this.value)" onchange="setTemperature(this.value)">
-    </div>
+    <button class="set-temp-btn" onclick="setTemp()">Set Temperature</button>
   </div>
   <script>
-    function setAC(state) {
-      // Replace URL with your backend endpoint
-      fetch('/ac/state', {
+    let acOn = false;
+    let temperature = 24;
+    const statusDiv = document.getElementById('status');
+    const tempSpan = document.getElementById('temp');
+
+    // Load initial state from backend
+    async function loadStatus() {
+      const res = await fetch('/fetch');
+      const data = await res.json();
+      acOn = data.status === "ON";
+      temperature = data.temperature;
+      statusDiv.textContent = acOn ? "AC is ON" : "AC is OFF";
+      tempSpan.textContent = temperature;
+    }
+
+    async function toggleAC(state) {
+      acOn = state;
+      statusDiv.textContent = acOn ? "AC is ON" : "AC is OFF";
+      await fetch('/update', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({state: state})
-      })
-      .then(response => response.json())
-      .then(data => alert(`AC turned ${state.toUpperCase()}`))
-      .catch(error => alert('Error setting AC state'));
+        body: JSON.stringify({status: acOn ? "ON" : "OFF", temperature})
+      });
     }
-    function setTemperature(temp) {
-      // Replace URL with your backend endpoint
-      fetch('/ac/temperature', {
+
+    function changeTemp(delta) {
+      temperature += delta;
+      tempSpan.textContent = temperature;
+    }
+
+    async function setTemp() {
+      if (!acOn) {
+        alert("Please turn on the AC first.");
+        return;
+      }
+      await fetch('/update', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({temperature: temp})
-      })
-      .then(response => response.json())
-      .then(data => alert(`Temperature set to ${temp}°C`))
-      .catch(error => alert('Error setting temperature'));
+        body: JSON.stringify({status: acOn ? "ON" : "OFF", temperature})
+      });
+      alert("Set temperature to " + temperature + "°C");
     }
-    function updateTempDisplay(value) {
-      document.getElementById('tempDisplay').innerText = value;
-    }
+
+    loadStatus();
+    setInterval(loadStatus, 2000);
   </script>
 </body>
-</html>"""
+</html>
+"""
 
-# --- ROUTES ---
-
+# --- Flask Routes ---
 @app.route('/')
 def home():
     return render_template_string(HTML)
 
+@app.route('/fetch')
+def fetch():
+    data = collection.find_one()
+    return jsonify({"status": data["status"], "temperature": data["temperature"]})
 
-@app.route('/ac/state', methods=['POST'])
-def ac_state():
+@app.route('/update', methods=['POST'])
+def update():
     data = request.get_json()
-    state = data.get("state", "").lower()
-    if state not in ["on", "off"]:
-        return jsonify({"error": "Invalid state"}), 400
-    collection.update_one({}, {"$set": {"status": state}})
-    return jsonify({"ok": True, "state": state})
+    collection.update_one({}, {"$set": {
+        "status": data["status"],
+        "temperature": int(data["temperature"])
+    }})
+    return jsonify({"ok": True})
 
-
-@app.route('/ac/temperature', methods=['POST'])
-def ac_temperature():
-    data = request.get_json()
-    try:
-        temp = int(data.get("temperature", 24))
-    except ValueError:
-        return jsonify({"error": "Invalid temperature"}), 400
-    if not 16 <= temp <= 30:
-        return jsonify({"error": "Temperature out of range"}), 400
-    collection.update_one({}, {"$set": {"temperature": temp}})
-    return jsonify({"ok": True, "temperature": temp})
-
-
-@app.route('/fetch', methods=['GET'])
-def fetch_data():
-    d = collection.find_one()
-    return jsonify({"status": d["status"], "temperature": d["temperature"]})
-
-
+# --- Run Flask App ---
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
